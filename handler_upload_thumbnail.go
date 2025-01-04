@@ -12,8 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxMemory int64 = 10 >> 20 // 10 MB
-
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
@@ -36,6 +34,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
+	const maxMemory = 10 << 20 // 10 MB
 	err = r.ParseMultipartForm(maxMemory)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't parse form data", err)
