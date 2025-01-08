@@ -5,6 +5,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -80,8 +81,15 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	//generate key
+	aspectRatio, err := getVideoAspectRatio(tempVidFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't handle aspect ratio", err)
+		return
+	}
+
+	//generate key with aspect ratio prefix
 	key := getAssetPath(mediaType)
+	key = filepath.Join(aspectRatio, key)
 
 	// Upload to S3
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
