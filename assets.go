@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,7 @@ func (cfg apiConfig) ensureAssetsDir() error {
 	return nil
 }
 
-func getAssetPath(mediaType string) string {
+func generateRandomNameWithExtensionType(mediaType string) string {
 	byteSlice := make([]byte, 32)
 	_, err := rand.Read(byteSlice)
 	if err != nil {
@@ -51,9 +52,15 @@ func mediaTypeToExtension(mediaType string) string {
 		return ".bin"
 	}
 	return "." + parts[1]
-
 }
 
+// getVideoAspectRatio uses ffprobe to retrieve the video's width and height.
+// It calculates the aspect ratio, returning:
+//   - "16:9" for 16:9 ratio
+//   - "9:16" for 9:16 ratio
+//   - "other" for any other ratio
+//
+// If there's an error it returns an empty string and an error.
 func getVideoAspectRatio(filePath string) (string, error) {
 	cmd := exec.Command(
 		"ffprobe", "-v",
@@ -62,10 +69,11 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		filePath,
 	)
 
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffprobe error: %v", err)
+		return "", fmt.Errorf("ffprobe error: %s\nCommand failed with: %v", stderr.String(), err)
 	}
 
 	var output struct {
@@ -82,7 +90,6 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "", errors.New("no video streams found")
 	}
 
-	// calculate ratio
 	width := output.Streams[0].Width
 	height := output.Streams[0].Height
 	ratio := calculateAspectRatio(width, height)
@@ -97,4 +104,35 @@ func calculateAspectRatio(width, height int) string {
 		return "portrait"
 	}
 	return "other"
+}
+
+// processVideoForFastStart uses ffmpeg to create an MP4 with fast start.
+// It returns the filepath of the encoded video or an error if processing fails.
+func processVideoForFastStart(inputFilePath string) (string, error) {
+	log.Println("Beginning fast start encoding...")
+	faststartPath := fmt.Sprintf("%s.processing", inputFilePath)
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", inputFilePath, // "-i": Input file option, followed by the path of the input file.
+		"-c", "copy", // "-c copy": Copy the codecs from the input to the output without re-encoding.
+		"-movflags", "faststart", // "-movflags faststart": Enables faststart for the MP4.
+		"-f", "mp4", // "-f mp4": Force the output format to be MP4.
+		faststartPath, // faststartPath: The destination path for the processed video file.
+	)
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg error: %s\nCommand failed with: %v", stderr.String(), err)
+	}
+	fileInfo, err := os.Stat(faststartPath)
+	if err != nil {
+		return "", fmt.Errorf("couldn't stat processed file: %v", err)
+	}
+	if fileInfo.Size() == 0 {
+		return "", errors.New("processed file is empty")
+	}
+
+	log.Printf("Encoding for '%s' complete: %d bytes\n", fileInfo.Name(), fileInfo.Size())
+	return faststartPath, nil
 }
