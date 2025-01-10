@@ -46,6 +46,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusUnauthorized, "Not authorized to update video", err)
 	}
 
+	// handle video file
 	file, fileHeader, err := r.FormFile("video")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse form file", err)
@@ -81,21 +82,36 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// process vid for fast start
+	processedFilePath, err := processVideoForFastStart(tempVidFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video", err)
+		return
+	}
+	defer os.Remove(processedFilePath)
+
+	fastEncodedVid, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open encoded file", err)
+	}
+	defer fastEncodedVid.Close()
+
+	// handle video metadata
 	aspectRatio, err := getVideoAspectRatio(tempVidFile.Name())
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't handle aspect ratio", err)
 		return
 	}
 
-	//generate key with aspect ratio prefix
-	key := getAssetPath(mediaType)
+	//generate key for s3 with aspect ratio as prefix
+	key := generateRandomNameWithExtensionType(mediaType)
 	key = filepath.Join(aspectRatio, key)
 
 	// Upload to S3
 	_, err = cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      aws.String(cfg.s3Bucket),
 		Key:         aws.String(key),
-		Body:        tempVidFile,
+		Body:        fastEncodedVid,
 		ContentType: aws.String(mediaType),
 	})
 	if err != nil {
