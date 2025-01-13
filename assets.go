@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 )
 
 func (cfg apiConfig) ensureAssetsDir() error {
@@ -135,4 +141,38 @@ func processVideoForFastStart(inputFilePath string) (string, error) {
 
 	log.Printf("Encoding for '%s' complete: %d bytes\n", fileInfo.Name(), fileInfo.Size())
 	return faststartPath, nil
+
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	signedClient := s3.NewPresignClient(s3Client)
+	presignReq, err := signedClient.PresignGetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(expireTime))
+	if err != nil {
+		return "", fmt.Errorf("couldn't create presign URL %v", err)
+	}
+
+	return presignReq.URL, nil
+}
+
+// dbVideoToSignedVideo returns the video with presigned URL
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+	if video.VideoURL == nil {
+		return video, nil
+	}
+	urlParts := strings.Split(*video.VideoURL, ",")
+	if len(urlParts) < 2 {
+		return video, nil
+	}
+	bucket := urlParts[0]
+	key := urlParts[1]
+	presignedURL, err := generatePresignedURL(cfg.s3Client, bucket, key, 10*time.Minute)
+	if err != nil {
+		return video, err
+	}
+	video.VideoURL = &presignedURL
+
+	return video, nil
 }
